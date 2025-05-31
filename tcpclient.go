@@ -56,12 +56,13 @@ type tcpPackager struct {
 }
 
 // Encode adds modbus application protocol header:
-//  Transaction identifier: 2 bytes
-//  Protocol identifier: 2 bytes
-//  Length: 2 bytes
-//  Unit identifier: 1 byte
-//  Function code: 1 byte
-//  Data: n bytes
+//
+//	Transaction identifier: 2 bytes
+//	Protocol identifier: 2 bytes
+//	Length: 2 bytes
+//	Unit identifier: 1 byte
+//	Function code: 1 byte
+//	Data: n bytes
 func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	adu = make([]byte, tcpHeaderSize+1+len(pdu.Data))
 
@@ -107,10 +108,11 @@ func (mb *tcpPackager) Verify(aduRequest []byte, aduResponse []byte) (err error)
 }
 
 // Decode extracts PDU from TCP frame:
-//  Transaction identifier: 2 bytes
-//  Protocol identifier: 2 bytes
-//  Length: 2 bytes
-//  Unit identifier: 1 byte
+//
+//	Transaction identifier: 2 bytes
+//	Protocol identifier: 2 bytes
+//	Length: 2 bytes
+//	Unit identifier: 1 byte
 func (mb *tcpPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	// Read length value in the header
 	length := binary.BigEndian.Uint16(adu[4:])
@@ -144,11 +146,9 @@ type tcpTransporter struct {
 	lastActivity time.Time
 }
 
-// Send sends data to server and ensures response length is greater than header length.
 func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
-
 	// Establish a new connection if not connected
 	if err = mb.connect(); err != nil {
 		return
@@ -171,27 +171,42 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 	}
 	// Read header first
 	var data [tcpMaxLength]byte
-	if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err != nil {
+	var size int = tcpHeaderSize + 1
+	var temp [tcpMaxLength]byte
+	var isHeartbeat bool = false
+	if _, err = io.ReadFull(mb.conn, temp[:size]); err != nil {
 		return
 	}
+	if 0x20 == temp[0] {
+		isHeartbeat = true
+		copy(data[0:], temp[1:])
+		mb.logf("heart:  % s", isHeartbeat)
+	} else {
+		copy(data[0:], temp[0:])
+	}
+	mb.logf("前8个字节:  % x", temp[:size])
 	// Read length, ignore transaction & protocol id (4 bytes)
 	length := int(binary.BigEndian.Uint16(data[4:]))
-	if length <= 0 {
-		mb.flush(data[:])
-		err = fmt.Errorf("modbus: length in response header '%v' must not be zero", length)
-		return
-	}
-	if length > (tcpMaxLength - (tcpHeaderSize - 1)) {
-		mb.flush(data[:])
+	if length < 2 || length > (tcpMaxLength-(tcpHeaderSize-1)) {
+		mb.flush(temp[:])
 		err = fmt.Errorf("modbus: length in response header '%v' must not greater than '%v'", length, tcpMaxLength-tcpHeaderSize+1)
 		return
 	}
+	mb.logf("数据长度:  % d", length)
 	// Skip unit id
-	length += tcpHeaderSize - 1
-	if _, err = io.ReadFull(mb.conn, data[tcpHeaderSize:length]); err != nil {
+	length += size - 1
+	if !isHeartbeat {
+		length -= 1
+	}
+	mb.logf("填充位置:  % d  -》  % d", size, length)
+	if _, err = io.ReadFull(mb.conn, temp[size:length]); err != nil {
 		return
 	}
-	aduResponse = data[:length]
+	if isHeartbeat {
+		aduResponse = temp[1:length]
+	} else {
+		aduResponse = temp[:length]
+	}
 	mb.logf("modbus: received % x\n", aduResponse)
 	return
 }
