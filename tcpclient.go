@@ -177,7 +177,10 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 	if _, err = io.ReadFull(mb.conn, temp[:size]); err != nil {
 		return
 	}
-	if 0x20 == temp[0] {
+	var requestId int = int(binary.BigEndian.Uint16(aduRequest[0:]))
+	var responseId int = int(binary.BigEndian.Uint16(temp[0:]))
+	//更新为请求ID与返回ID匹配，如果存在心跳报文粘包的情况，则后移2个字节
+	if requestId != responseId {
 		isHeartbeat = true
 		copy(data[0:], temp[1:])
 		mb.logf("heart:  % s", isHeartbeat)
